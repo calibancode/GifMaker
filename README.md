@@ -75,9 +75,16 @@ Launch the GUI with:
 ```bash
 python main.py
 ```
-Or invoke from CLI _(coming soon)_:
+Or invoke from CLI:
 ```bash
-python main.py -i input.mp4 -o output.gif -fps 15 -scale 480
+# Convert to a GIF at 15fps, 480px height
+python main.py -i video.mp4 -o out.gif -fps 15 -h 480
+
+# Create a looping lossless WebP
+python main.py -i video.mp4 -o out.webp --webp-lossless --loop
+
+# Use custom palette and dithering
+python main.py -i video.mp4 -o out.gif --palette=diff --dither=floyd_steinberg
 ```
 
 ## Features
