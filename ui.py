@@ -95,7 +95,7 @@ class GIFConverterApp(QWidget):
         self._append_plain_log("Application started. Please select an input file.", False)
 
     def _init_ui(self):
-        self.setWindowTitle("Video to GIF Converter")
+        self.setWindowTitle("GifMaker")
         self.resize(600, 600)
 
         main_layout = QVBoxLayout(self)
@@ -384,7 +384,7 @@ class GIFConverterApp(QWidget):
         self.generate_button.setText("Generate WebP" if is_webp else "Generate GIF")
 
         # Update window title
-        self.setWindowTitle("Video to WebP Converter" if is_webp else "Video to GIF Converter")
+        self.setWindowTitle("WebPMaker" if is_webp else "GifMaker")
 
     def start_conversion(self):
         input_path = Path(self.input_file_var.text())
