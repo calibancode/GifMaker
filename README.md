@@ -78,7 +78,7 @@ python main.py
 Or invoke from CLI:
 ```bash
 # Convert to a GIF at 15fps, 480px height
-python main.py -i video.mp4 -o out.gif -fps 15 -h 480
+python main.py -i video.mp4 -o out.gif -fps 15 --height 480
 
 # Create a looping lossless WebP
 python main.py -i video.mp4 -o out.webp --webp-lossless --loop
