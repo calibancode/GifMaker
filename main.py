@@ -1,3 +1,4 @@
+# starts app and checks dependencies
 import sys
 from pathlib import Path
 import argparse
