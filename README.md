@@ -25,13 +25,16 @@
 ## Screenshots
 
 <p align="center">
+  <sub>Launch view of the GifMaker interface.</sub><br><br>
   <img src="assets/ui.png" alt="GifMaker application on launch." width="400">
-  <br><sub>Launch view of the GifMaker interface.</sub>
 </p>
 
+---
+
 <p align="center">
+  <sub>Sample WebP output. (480p15, WebP @ Quality: 90, Compression: 6)</sub><br><br>
   <img src="assets/paulblartmallcop2.webp" alt="From Paul Blart: Mall Cop 2. Media shown is for demonstration and review purposes under fair use.">
-  <br><sub>© 2015 Columbia Pictures. Used under fair use for demonstration purposes.</sub><br><sub>Sample WebP output. (480p15, WebP @ Quality: 90, Compression: 6)</sub>
+  <br><sub>© 2015 Columbia Pictures. Used under fair use for demonstration purposes.</sub>
 </p>
 
 ## Why GifMaker
