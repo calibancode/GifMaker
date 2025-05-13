@@ -9,10 +9,8 @@ PySide6 frontend for converting video clips to GIF or animated WebP with ffmpeg 
 * `pip install PySide6`
 
 ## Usage
-```
-
+```bash
 python main.py
-
 ```
 
 ## Features
