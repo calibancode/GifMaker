@@ -54,6 +54,9 @@ Muck up your GIFs *your* own way—with precision.
 
 ## Installation
 
+> [!NOTE]
+> These instructions are for Unix-like systems. If you don't know what that means, head to [Windows Setup](#-windows-setup)
+
 #### Install dependencies
 
 ```bash
@@ -80,27 +83,76 @@ git pull
 
 ---
 
-#### Windows Setup
+### 🪟 Windows Setup
 
-You'll need:
-* [Chocolatey](https://chocolatey.org/install) — Run the install command in an *admin PowerShell*
-* [Git](https://gitforwindows.org/) — or just:
+**TL;DR**
+With [Chocolatey](https://chocolatey.org/install) installed, just paste these into PowerShell (Admin), one line at a time:
 ```powershell
-choco install git
-```
-* [Python 3.10+](https://www.python.org/downloads/) — or just:
-```powershell
-choco install python
-```
-* `ffmpeg` and `gifsicle` — once Chocolatey is working:
-```powershell
-choco install ffmpeg gifsicle
-```
-Then, in any shell:
-```powershell
+choco install git python ffmpeg gifsicle -y
 git clone https://github.com/calibancode/GifMaker.git
 cd GifMaker
 pip install -r requirements.txt
+python main.py
+```
+
+#### 🧱 Step-by-step
+
+**1. 🧙‍♂️ Install [Chocolatey](https://chocolatey.org/install)**
+
+Open *PowerShell as Administrator* (Search for “PowerShell”, right-click → **Run as Administrator**), then paste in the command from the Chocolatey site.
+
+> [!WARNING]
+> If it complains about "execution policy", check with `Get-ExecutionPolicy` — if it says `Restricted`, follow [these steps](https://chocolatey.org/install) to fix it.
+
+Once installed, you get the `choco` package manager. You can use it to install just about anything, and it also makes sure GifMaker finds its dependencies.
+
+**2. 🔧 Install Required Tools**
+
+You'll need:
+
+* **Git** — to download and update the code
+* **Python** — the language it runs in (3.10+)
+* **ffmpeg** — for video slicing
+* **gifsicle** — for GIF optimization
+
+Install them all at once:
+```powershell
+choco install git python ffmpeg gifsicle
+```
+
+> [!TIP]
+> Already have one of these? No problem —  `choco` will skip it or upgrade it *and* ensure it's added to your `$PATH`
+
+**3. 📁 Get the Project**
+
+Anywhere in PowerShell (doesn't have to be Admin):
+
+First, navigate to where you'd like to access GifMaker. For example:
+```powershell
+cd C:\Users\<YourUsername>\Desktop
+```
+
+Then, clone the repo:
+```powershell
+git clone https://github.com/calibancode/GifMaker.git
+```
+
+Finally, navigate to the newly created GifMaker folder:
+```powershell
+cd GifMaker
+```
+
+**4. 📦 Install Python Packages**
+
+Still in the GifMaker folder:
+```powershell
+pip install -r requirements.txt
+```
+
+**✅ Run It**
+
+Once everything's in place:
+```powershell
 python main.py
 ```
 
