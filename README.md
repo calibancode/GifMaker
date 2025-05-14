@@ -12,6 +12,12 @@
 
 > A desktop frontend for `ffmpeg`, built with PySide6. Tweak, optimize, and convert video clips into perfect GIFs or efficient WebPs—fast!
 
+<div align="center">
+
+<table>
+  <tr>
+    <td>
+
 ## Contents
 - [Screenshots](#screenshots)
 - [Why GifMaker](#why-gifmaker)
@@ -22,20 +28,40 @@
 - [License](#license)
 - [Contributing](#contributing)
 
+</td>
+    <td align="center" style="vertical-align: top; padding: 10px;">
+
+<img src="assets/GifMakerExample.webp" alt="GifMaker in action." width="400"><br>
+<sub>GifMaker in action. (Converted to WebP by GifMaker)</sub>
+
+</td>
+  </tr>
+</table>
+
+</div>
+
+
+
 ## Screenshots
 
-<p align="center">
-  <sub>Launch view of the GifMaker interface.</sub><br><br>
-  <img src="assets/ui.png" alt="GifMaker application on launch." width="400">
-</p>
 
----
+<div align="center">
 
-<p align="center">
-  <sub>Sample output. (480p15, WebP @ Quality: 90, Compression: 6)</sub><br><br>
-  <img src="assets/paulblartmallcop2.webp" alt="From Paul Blart: Mall Cop 2. Media shown is for demonstration and review purposes under fair use.">
-  <br><sub>© 2015 Columbia Pictures. Used under fair use for demonstration purposes.</sub>
-</p>
+<table>
+  <tr>
+    <td align="center" style="vertical-align: top; padding: 10px;">
+      <sub>Launch view of the GifMaker interface.</sub><br><br>
+      <img src="assets/ui.png" alt="GifMaker application on launch." width="300">
+    </td>
+    <td align="center" style="vertical-align: top; padding: 10px;">
+      <sub>Sample output. (480p15, WebP @ Quality: 90, Compression: 6)</sub><br><br>
+      <img src="assets/paulblartmallcop2.webp" alt="From Paul Blart: Mall Cop 2. Media shown is for demonstration and review purposes under fair use."><br>
+      <sub>© 2015 Columbia Pictures. Used under fair use for demonstration purposes.</sub>
+    </td>
+  </tr>
+</table>
+
+</div>
 
 ## Why GifMaker
 
