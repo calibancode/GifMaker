@@ -50,7 +50,7 @@ Muck up your GIFs *your* own way—with precision.
 
 * Python 3.10+
 * [ffmpeg](https://ffmpeg.org/), [ffprobe](https://ffmpeg.org/ffprobe.html), and [gifsicle](https://www.lcdf.org/gifsicle/) in your system `$PATH`.
-* PySide6 (`pip install PySide6`)
+* PySide6 (`pip install PySide6` or `pip install -r requirements.txt`)
 
 ## Installation
 
@@ -84,6 +84,10 @@ git pull
 
 You'll need:
 * [Chocolatey](https://chocolatey.org/install) — Run the install command in an *admin PowerShell*
+* [Git](https://gitforwindows.org/) — or just:
+```powershell
+choco install git
+```
 * [Python 3.10+](https://www.python.org/downloads/) — or just:
 ```powershell
 choco install python
