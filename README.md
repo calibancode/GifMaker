@@ -54,7 +54,7 @@ Muck up your GIFs *your* own way—with precision.
 
 ## Installation
 
-Install dependencies:
+#### Install dependencies
 
 ```bash
 # Arch
@@ -64,7 +64,7 @@ sudo pacman -S ffmpeg gifsicle
 sudo apt install ffmpeg gifsicle
 ```
 
-Clone the repo:
+#### Clone the repo
 
 ```bash
 git clone https://github.com/calibancode/GifMaker.git
@@ -72,13 +72,35 @@ cd GifMaker
 pip install -r requirements.txt
 ```
 
+---
+
+#### Windows Setup
+
+You'll need:
+* [Chocolatey](https://chocolatey.org/install) — Run the install command in an *admin PowerShell*
+* [Python 3.10+](https://www.python.org/downloads/) — or just:
+```powershell
+choco install python
+```
+* `ffmpeg` and `gifsicle` — once Chocolatey is working:
+```powershell
+choco install ffmpeg gifsicle
+```
+Then, in any shell:
+```powershell
+git clone https://github.com/calibancode/GifMaker.git
+cd GifMaker
+pip install -r requirements.txt
+python main.py
+```
+
 ## Usage
 
-Launch the GUI with:
+#### Launch the GUI with:
 ```bash
 python main.py
 ```
-Or invoke from CLI:
+#### Or invoke from CLI:
 ```bash
 # Convert to a GIF at 15fps, 480px height
 python main.py -i video.mp4 -o out.gif -fps 15 --height 480
