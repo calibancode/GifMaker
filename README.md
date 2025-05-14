@@ -72,6 +72,12 @@ cd GifMaker
 pip install -r requirements.txt
 ```
 
+#### Update, if necessary
+```bash
+cd GifMaker
+git pull
+```
+
 ---
 
 #### Windows Setup
