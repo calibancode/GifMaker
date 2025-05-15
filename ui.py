@@ -20,6 +20,11 @@ from utils import (
 from models import ConverterSettings
 from worker import Worker
 
+IMAGE_VIDEO_EXTS = (
+    '.mp4', '.mov', '.mkv', '.avi', '.webm', '.flv',
+    '.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif', '.webp', '.apng'
+)
+
 class DitherComboBox(QComboBox):
     def __init__(self, options_map, default_short_key, parent=None):
         super().__init__(parent)
@@ -341,8 +346,8 @@ class GIFConverterApp(QWidget):
 
     def browse_input_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Video File", "",
-            "Video files (*.mp4 *.mov *.mkv *.avi *.webm);;All files (*.*)"
+            self, "Select Media File", "",
+            "Media files (*.mp4 *.mov *.mkv *.avi *.webm *.flv *.png *.jpg *.jpeg *.bmp *.tiff *.gif *.webp *.apng);;All files (*.*)"
         )
         if file_path:
             self._handle_new_input_file(file_path)
@@ -474,7 +479,7 @@ class GIFConverterApp(QWidget):
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
-                if url.isLocalFile() and url.toLocalFile().lower().endswith(('.mp4', '.mov', '.mkv', '.avi', '.webm')):
+                if url.isLocalFile() and url.toLocalFile().lower().endswith(IMAGE_VIDEO_EXTS):
                     event.acceptProposedAction()
                     return
         event.ignore()
@@ -482,7 +487,7 @@ class GIFConverterApp(QWidget):
     def dropEvent(self, event: QDropEvent):
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
-                if url.isLocalFile():
+                if url.isLocalFile() and url.toLocalFile().lower().endswith(IMAGE_VIDEO_EXTS):
                     self._handle_new_input_file(url.toLocalFile())
                     event.acceptProposedAction()
                     return

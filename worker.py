@@ -189,6 +189,12 @@ class Worker(QObject):
             self._start_next_step()
             return
 
+        if self.ffmpeg_frame_count == 1:
+            self._log("Single-frame GIF detected; skipping gifsicle optimization.")
+            self.current_step = Step.FINISHED
+            self._start_next_step()
+            return
+
         self.current_step = Step.OPTIMIZE
         self._log("\n--- Optimising GIF ---")
         self._emit_weighted_progress(30, "Optimizing GIF…")
@@ -334,6 +340,11 @@ class Worker(QObject):
         elif self.current_step == Step.RENDER:
             self._log("GIF rendering complete.")
             self._emit_weighted_progress(100, "GIF rendered.")
+            if self.ffmpeg_frame_count <= 1:
+                self._log("Single-frame GIF detected; skipping gifsicle optimization.")
+                self.current_step = Step.FINISHED
+                self._start_next_step()
+                return
             self.current_step = Step.OPTIMIZE
         elif self.current_step == Step.OPTIMIZE:
             self._log("GIF optimisation complete.")
