@@ -120,6 +120,8 @@ cd GifMaker
 pip install -r requirements.txt
 python main.py
 ```
+<details>
+  <summary>Step-by-step guide here!</summary>
 
 #### 🧱 Step-by-step
 
@@ -181,6 +183,7 @@ Once everything's in place:
 ```powershell
 python main.py
 ```
+</details>
 
 ## Usage
 
