@@ -95,6 +95,17 @@ class Worker(QObject):
             Step.FINISHED: self._finalize_conversion,
         }[self.current_step]()
 
+    def _add_scale_crop(self, flt: list[str], w: int, h: int) -> None:
+        if w == -1 and h == -1:
+            return
+        if w == -1 or h == -1:
+            flt.append(f"scale={w if w!=-1 else -1}:{h if h!=-1 else -1}:flags=lanczos")
+            return
+        flt += [
+            f"scale={w}:{h}:flags=lanczos:force_original_aspect_ratio=increase",
+            f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2"
+        ]
+
     def _execute_palette_generation(self):
         self.current_step = Step.PALETTE
         self._log("\n--- Generating Palette ---")
@@ -115,7 +126,7 @@ class Worker(QObject):
         # Speed multiplier for palette generation
         if self.settings.speed_multiplier and self.settings.speed_multiplier != 1.0:
             filters.append(f"setpts=PTS/{self.settings.speed_multiplier}")
-        filters.append(f"scale={self.settings.width}:{self.settings.height}:flags=lanczos")
+        self._add_scale_crop(filters, self.settings.width, self.settings.height)
         filters.append("format=rgb24")
         filters.append(f"palettegen=stats_mode={self.settings.palette_mode}")
 
@@ -149,7 +160,7 @@ class Worker(QObject):
             chain.append(f"fps={fps}")
         if self.settings.speed_multiplier and self.settings.speed_multiplier != 1.0:
             chain.append(f"setpts=PTS/{self.settings.speed_multiplier}")
-        chain.append(f"scale={w}:{h}:flags=lanczos")
+        self._add_scale_crop(chain, w, h)
         first_chain = ",".join(chain) + "[x]"
 
         filter_complex = f"{first_chain};[x][1:v]paletteuse=dither={self.settings.dither_setting}"
@@ -437,7 +448,7 @@ class Worker(QObject):
             filters.append(f"fps={fps}")
         if self.settings.speed_multiplier and self.settings.speed_multiplier != 1.0:
             filters.append(f"setpts=PTS/{self.settings.speed_multiplier}")
-        filters.append(f"scale={w}:{h}:flags=lanczos")
+        self._add_scale_crop(filters, w, h)
         filters.append("format=rgba")
 
         vf_str = ",".join(filters)
