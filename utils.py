@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QMessageBox
 # Hardcoded configuration values (config.ini deprecated)
 DEFAULT_FPS     = -1
 DEFAULT_WIDTH   = -1
-DEFAULT_HEIGHT  = 480
+DEFAULT_HEIGHT  = -1
 DEFAULT_TIMEOUT = 10
 DEFAULT_SPEED = 1.0
 
