@@ -161,9 +161,12 @@ class Worker(QObject):
         if self.settings.speed_multiplier and self.settings.speed_multiplier != 1.0:
             chain.append(f"setpts=PTS/{self.settings.speed_multiplier}")
         self._add_scale_crop(chain, w, h)
-        first_chain = ",".join(chain) + "[x]"
-
-        filter_complex = f"{first_chain};[x][1:v]paletteuse=dither={self.settings.dither_setting}"
+        if chain:
+            first_chain = f"[0:v]{','.join(chain)}[x]"
+            filter_complex = f"{first_chain};[x][1:v]paletteuse=dither={self.settings.dither_setting}"
+        else:
+            # no fps/scale/speed filters, feed the raw video into paletteuse
+            filter_complex = f"[0:v][1:v]paletteuse=dither={self.settings.dither_setting}"
 
         args = [
             "-v", "warning",
