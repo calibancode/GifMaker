@@ -134,7 +134,7 @@ class Worker(QObject):
             "-v", "warning",
             "-i", str(self.settings.input_file),
             "-vf", ",".join(filters),
-            "-frames:v", "1", "-update", "1",
+            "-update", "1",
             "-y", str(self.pal_file)
         ]
 
@@ -267,11 +267,14 @@ class Worker(QObject):
         log_prefix = self.current_qprocess.property("log_prefix")
 
         self.stdout_buffer += data
-        for line in re.split(r'[\r\n]+', self.stdout_buffer):
+        parts = re.split(r'[\r\n]+', self.stdout_buffer)
+        # Preserve any trailing partial line for the next read
+        self.stdout_buffer = parts[-1] if self.stdout_buffer and self.stdout_buffer[-1] not in "\r\n" else ""
+        lines_to_process = parts[:-1] if self.stdout_buffer else parts
+        for line in lines_to_process:
             if not line:
                 continue
             self._process_stdout_line(line, log_prefix)
-        self.stdout_buffer = ""
 
     def _process_stdout_line(self, line: str, log_prefix: str):
 
@@ -460,7 +463,6 @@ class Worker(QObject):
             "-v", "warning",
             "-i", str(self.settings.input_file),
             "-vf", vf_str,
-            "-loop", "0",
         ]
 
         if self.settings.webp_lossless:
@@ -471,10 +473,7 @@ class Worker(QObject):
                 "-compression_level", str(self.settings.webp_compression)
             ]
         
-        if self.settings.loop:
-            args += ["-loop", "0"]
-        else:
-            args += ["-loop", "1"]
+        args += ["-loop", "0" if self.settings.loop else "1"]
 
         args += ["-y", str(self.settings.output_file)]
 

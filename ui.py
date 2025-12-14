@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QComboBox, QProgressBar, QTextEdit,
     QFileDialog, QMessageBox, QCheckBox
 )
-from PySide6.QtCore import Qt, QThread, Signal, Slot, QTimer
+from PySide6.QtCore import Qt, QThread, Signal, Slot, QTimer, QSettings
 from PySide6.QtGui import QFontMetrics, QTextCursor, QDragEnterEvent, QDropEvent
 
 from utils import (
@@ -93,6 +93,7 @@ class GIFConverterApp(QWidget):
 
         self._init_ui()
         self.setAcceptDrops(True)
+        self._load_settings()
 
         self._append_plain_log(f"Using ffmpeg: {self.ffmpeg_path} (from {ffmpeg_source})", False)
         self._append_plain_log(f"Using gifsicle: {self.gifsicle_path} (from {gifsicle_source})", False)
@@ -273,6 +274,7 @@ class GIFConverterApp(QWidget):
         main_layout.setStretchFactor(log_frame, 1)
 
         self.output_file_var.textChanged.connect(self._update_webp_options_state)
+        self._update_webp_options_state()
 
     @Slot(str, bool)
     def _append_plain_log(self, message, clear_first):
@@ -427,6 +429,7 @@ class GIFConverterApp(QWidget):
         self.cancel_button.setVisible(True)
         self.cancel_button.setEnabled(True)
         self._update_progress_bar(0, "Starting…")
+        self._save_settings()
 
         speed_multiplier = self.speed_multiplier_var.value()
 
@@ -501,4 +504,57 @@ class GIFConverterApp(QWidget):
             if not self.worker_thread.wait(3000):
                 self._append_plain_log("Worker did not quit cleanly. Forcing exit.", False)
         self._cleanup_worker_thread()
+        self._save_settings()
         super().closeEvent(event)
+
+    def _load_settings(self):
+        settings = QSettings("GifMaker", "GifMaker")
+        self.input_file_var.setText(settings.value("input_file", ""))
+        self.output_file_var.setText(settings.value("output_file", ""))
+
+        def _set_int(line_edit, key, default):
+            try:
+                val = int(settings.value(key, default))
+                line_edit.setText(str(val))
+            except (TypeError, ValueError):
+                line_edit.setText(str(default))
+
+        _set_int(self.fps_var, "fps", DEFAULT_FPS)
+        _set_int(self.width_var, "width", DEFAULT_WIDTH)
+        _set_int(self.height_var, "height", DEFAULT_HEIGHT)
+        try:
+            speed = float(settings.value("speed_multiplier", DEFAULT_SPEED))
+            self.speed_multiplier_var.setValue(speed)
+        except (TypeError, ValueError):
+            self.speed_multiplier_var.setValue(DEFAULT_SPEED)
+
+        palette_val = settings.value("palette_mode", PALETTE_MODE_OPTIONS[DEFAULT_PALETTE_MODE_KEY][1])
+        idx = self.palette_mode_var.findData(palette_val)
+        if idx != -1:
+            self.palette_mode_var.setCurrentIndex(idx)
+
+        dither_val = settings.value("dither", DITHER_OPTIONS_FULL[DEFAULT_DITHER_SHORT_KEY][1])
+        idx = self.quality_var.findData(dither_val)
+        if idx != -1:
+            self.quality_var.setCurrentIndex(idx)
+
+        self.loop_checkbox.setChecked(settings.value("loop", True, type=bool))
+
+        _set_int(self.webp_quality_var, "webp_quality", WEBP_QUALITY)
+        _set_int(self.webp_compression_var, "webp_compression", WEBP_COMPRESSION)
+        self.webp_lossless_checkbox.setChecked(settings.value("webp_lossless", False, type=bool))
+
+    def _save_settings(self):
+        settings = QSettings("GifMaker", "GifMaker")
+        settings.setValue("input_file", self.input_file_var.text())
+        settings.setValue("output_file", self.output_file_var.text())
+        settings.setValue("fps", self.fps_var.text())
+        settings.setValue("width", self.width_var.text())
+        settings.setValue("height", self.height_var.text())
+        settings.setValue("speed_multiplier", self.speed_multiplier_var.value())
+        settings.setValue("palette_mode", self.palette_mode_var.currentData())
+        settings.setValue("dither", self.quality_var.currentData())
+        settings.setValue("loop", self.loop_checkbox.isChecked())
+        settings.setValue("webp_quality", self.webp_quality_var.text())
+        settings.setValue("webp_compression", self.webp_compression_var.text())
+        settings.setValue("webp_lossless", self.webp_lossless_checkbox.isChecked())

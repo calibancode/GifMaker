@@ -1,10 +1,12 @@
 # starts app and checks dependencies
 import sys
+import os
 from pathlib import Path
 import argparse
 
 from PySide6.QtCore import QCoreApplication, QTimer
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QGuiApplication
 
 from ui import GIFConverterApp
 from utils import (
@@ -116,6 +118,21 @@ if __name__ == "__main__":
         run_cli_mode(sys.argv[1:])
     else:
         app = QApplication(sys.argv)
+        # Set explicit identifiers so Wayland compositors treat this as a distinct app.
+        QGuiApplication.setApplicationName("GifMaker")
+        QGuiApplication.setApplicationDisplayName("GifMaker")
+        QGuiApplication.setOrganizationName("GifMaker")
+        QGuiApplication.setOrganizationDomain("gifmaker.local")
+
+        # Only set a desktop file name if one exists to avoid xdg-desktop-portal registration errors.
+        desktop_name = "gifmaker.desktop"
+        repo_desktop = Path(__file__).resolve().parent / desktop_name
+        xdg_data_dirs = os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":")
+        candidate_files = [repo_desktop] + [Path(d) / "applications" / desktop_name for d in xdg_data_dirs]
+        for cand in candidate_files:
+            if cand.is_file():
+                QGuiApplication.setDesktopFileName(desktop_name)
+                break
 
         dependency_paths, missing_deps = check_dependencies()
         if missing_deps:
