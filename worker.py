@@ -1,77 +1,86 @@
-# runs gif conversion  in a background thread, reporting back progress and logs
+from __future__ import annotations
+
 import re
 import tempfile
 from enum import Enum, auto
 from pathlib import Path
+
+from PySide6.QtCore import QObject, Signal, Slot, QTimer, QProcess
+
+from engine import (
+    LogPrefix,
+    build_palette_plan,
+    build_gif_render_plan,
+    build_gifsicle_plan,
+    build_webp_plan,
+    estimate_total_frames,
+    is_webp_output,
+    parse_ffmpeg_progress_line,
+)
+from models import CommandPlan, ConversionJob, ToolPaths
+from process_runner import ProcessRunner
 from utils import get_video_fps
 
-from PySide6.QtCore import (
-    QObject, Signal, Slot, QProcess,
-    QTimer, QProcessEnvironment
-)
-
-from models import ConverterSettings
-
-# these used to be hardcoded magic strings. IDEs don't like that
-class LogPrefix(str, Enum):
-    FFMPEG_RENDER = "ffmpeg-render"
-    FFMPEG_PALETTE = "ffmpeg-palette"
-    GIFSICLE_OPTIMIZE = "gifsicle-optimize"
 
 class Step(Enum):
-    IDLE      = auto()
-    PALETTE   = auto()
-    RENDER    = auto()
-    OPTIMIZE  = auto()
-    FINISHED  = auto()
+    IDLE = auto()
+    PALETTE = auto()
+    RENDER = auto()
+    OPTIMIZE = auto()
+    FINISHED = auto()
 
-# arbitrary weights for fake progress smoothness. a pleasant lie.
-# these should sum to 100 for logical percentage mapping
+
 STEP_WEIGHTS = {
     Step.PALETTE: 10,
     Step.RENDER: 70,
-    Step.OPTIMIZE: 20
+    Step.OPTIMIZE: 20,
 }
 
+
 class Worker(QObject):
+    log_plain_signal = Signal(str, bool)
+    log_html_signal = Signal(str, bool)
+    progress_signal = Signal(int, str)
+    finished_signal = Signal(bool, str, str, bool)
 
-    log_plain_signal   = Signal(str, bool)
-    log_html_signal    = Signal(str, bool)
-    progress_signal    = Signal(int, str)
-    finished_signal    = Signal(bool, str, str, bool)
-
-    def __init__(self, settings: ConverterSettings):
+    def __init__(self, job: ConversionJob, tools: ToolPaths):
         super().__init__()
-        self.settings         = settings
-        self._is_cancelled    = False
+        self.job = job
+        self.tools = tools
+
+        self._is_cancelled = False
         self._kill_timer: QTimer | None = None
+        self._is_webp = is_webp_output(self.job.output_file)
+        self._render_label = "WebP" if self._is_webp else "GIF"
 
         self.ffmpeg_frame_count = 0
+        self.estimated_total_frames: int | None = None
 
-        self.current_qprocess: QProcess | None = None
+        self.runner = ProcessRunner(self)
+        self.runner.stdout_line.connect(self._on_stdout_line)
+        self.runner.stderr_line.connect(self._on_stderr_line)
+        self.runner.finished.connect(self._on_process_finished)
+        self.runner.error.connect(self._on_process_error)
+
         self.temp_dir_obj = None
         self.pal_file: Path | None = None
         self.current_step = Step.IDLE
 
-        self.stdout_buffer = ""
-        self.stderr_buffer = ""
-
-    def _log(self, msg: str, html=False, clear_first=False):
+    def _log(self, msg: str, html: bool = False, clear_first: bool = False) -> None:
         if html:
             self.log_html_signal.emit(msg, clear_first)
         else:
             self.log_plain_signal.emit(msg, clear_first)
 
     @Slot()
-    def request_cancellation_slot(self):
+    def request_cancellation_slot(self) -> None:
         if self._is_cancelled:
             return
         self._is_cancelled = True
         self._log("Cancellation requested by user.")
-        if self.current_qprocess and \
-           self.current_qprocess.state() != QProcess.ProcessState.NotRunning:
-            self._log(f"Terminating {self.current_qprocess.program()} ...")
-            self.current_qprocess.terminate()
+        if self.runner.is_running():
+            self._log("Terminating current process...")
+            self.runner.terminate()
 
             self._kill_timer = QTimer(self)
             self._kill_timer.setInterval(100)
@@ -79,37 +88,26 @@ class Worker(QObject):
             self._kill_timer.timeout.connect(self._force_kill_if_running)
             self._kill_timer.start()
 
-    def _force_kill_if_running(self):
-        if self.current_qprocess and \
-           self.current_qprocess.state() != QProcess.ProcessState.NotRunning:
-            self._log("Process didn’t die; sending SIGKILL …")
-            self.current_qprocess.kill()
+    def _force_kill_if_running(self) -> None:
+        if self.runner.is_running():
+            self._log("Process did not exit; sending SIGKILL...")
+            self.runner.kill()
 
-    def _start_next_step(self):
+    def _start_next_step(self) -> None:
         if self._is_cancelled:
-            self._handle_cancellation_during_step(); return
+            self._handle_cancellation_during_step()
+            return
         {
-            Step.PALETTE:  self._execute_palette_generation,
-            Step.RENDER:   self._execute_gif_rendering,
+            Step.PALETTE: self._execute_palette_generation,
+            Step.RENDER: self._execute_rendering,
             Step.OPTIMIZE: self._execute_gif_optimization,
             Step.FINISHED: self._finalize_conversion,
         }[self.current_step]()
 
-    def _add_scale_crop(self, flt: list[str], w: int, h: int) -> None:
-        if w == -1 and h == -1:
-            return
-        if w == -1 or h == -1:
-            flt.append(f"scale={w if w!=-1 else -1}:{h if h!=-1 else -1}:flags=lanczos")
-            return
-        flt += [
-            f"scale={w}:{h}:flags=lanczos:force_original_aspect_ratio=increase",
-            f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2"
-        ]
-
-    def _execute_palette_generation(self):
+    def _execute_palette_generation(self) -> None:
         self.current_step = Step.PALETTE
         self._log("\n--- Generating Palette ---")
-        self._emit_weighted_progress(5, "Generating palette…")
+        self._emit_weighted_progress(5, "Generating palette...")
 
         try:
             self.temp_dir_obj = tempfile.TemporaryDirectory()
@@ -118,91 +116,30 @@ class Worker(QObject):
             self._handle_error(f"Failed to create temp directory: {e}")
             return
 
-        self.pal_file = Path(self.temp_dir_obj.name) / "palette.png"
+        plan = build_palette_plan(self.job, self.tools, self.pal_file)
+        self._run_plan(plan)
 
-        filters = []
-        if self.settings.fps != -1:
-            filters.append(f"fps={self.settings.fps}")
-        # Speed multiplier for palette generation
-        if self.settings.speed_multiplier and self.settings.speed_multiplier != 1.0:
-            filters.append(f"setpts=PTS/{self.settings.speed_multiplier}")
-        self._add_scale_crop(filters, self.settings.width, self.settings.height)
-        filters.append("format=rgb24")
-        filters.append(f"palettegen=stats_mode={self.settings.palette_mode}")
-
-        args = [
-            "-v", "warning",
-            "-i", str(self.settings.input_file),
-            "-vf", ",".join(filters),
-            "-update", "1",
-            "-y", str(self.pal_file)
-        ]
-
-        self._run_qprocess(str(self.settings.ffmpeg_path), args, LogPrefix.FFMPEG_RENDER)
-
-    def _execute_gif_rendering(self):
-        if not self.pal_file or not self.pal_file.exists():
-            self._handle_error("Palette file missing before GIF render.")
-            return
-
+    def _execute_rendering(self) -> None:
         self.current_step = Step.RENDER
-        self._log("\n--- Rendering GIF ---")
+        self._log(f"\n--- Rendering {self._render_label} ---")
         self.ffmpeg_frame_count = 0
 
-        fps = self.settings.fps
-        w = self.settings.width
-        h = self.settings.height
-
-        is_webp = str(self.settings.output_file).lower().endswith(".webp")
-
-        chain = []
-        if fps != -1:
-            chain.append(f"fps={fps}")
-        if self.settings.speed_multiplier and self.settings.speed_multiplier != 1.0:
-            chain.append(f"setpts=PTS/{self.settings.speed_multiplier}")
-        self._add_scale_crop(chain, w, h)
-        if chain:
-            first_chain = f"[0:v]{','.join(chain)}[x]"
-            filter_complex = f"{first_chain};[x][1:v]paletteuse=dither={self.settings.dither_setting}"
+        if self._is_webp:
+            plan = build_webp_plan(self.job, self.tools)
         else:
-            # no fps/scale/speed filters, feed the raw video into paletteuse
-            filter_complex = f"[0:v][1:v]paletteuse=dither={self.settings.dither_setting}"
+            if not self.pal_file or not self.pal_file.exists():
+                self._handle_error("Palette file missing before GIF render.")
+                return
+            plan = build_gif_render_plan(self.job, self.tools, self.pal_file)
 
-        args = [
-            "-v", "warning",
-            "-i", str(self.settings.input_file),
-            "-i", str(self.pal_file),
-            "-filter_complex", filter_complex,
-        ]
-
-        if self.settings.loop:
-            args += ["-loop", "0"]
+        if self.job.total_duration:
+            self._emit_weighted_progress(0, f"Rendering {self._render_label}: 0 %")
         else:
-            args += ["-loop", "1"]
+            self.progress_signal.emit(-1, f"Rendering {self._render_label}...")
 
-        if is_webp:
-            args += ["-loop", "0"]
+        self._run_plan(plan)
 
-        args += ["-y", str(self.settings.output_file)]
-
-        if self.settings.total_duration and self.settings.total_duration > 0:
-            args = ["-progress", "pipe:1"] + args
-
-        if self.settings.total_duration:
-            self._emit_weighted_progress(0, "Rendering GIF: 0 %")
-        else:
-            self.progress_signal.emit(-1, "Rendering GIF…")
-
-        self._run_qprocess(str(self.settings.ffmpeg_path), args, LogPrefix.FFMPEG_RENDER)
-
-    def _execute_gif_optimization(self):
-        is_webp = str(self.settings.output_file).lower().endswith(".webp")
-        if is_webp:
-            self._log("Skipping GIF optimization step for WebP output.")
-            self.current_step = Step.FINISHED
-            self._start_next_step()
-            return
-
+    def _execute_gif_optimization(self) -> None:
         if self.ffmpeg_frame_count == 1:
             self._log("Single-frame GIF detected; skipping gifsicle optimization.")
             self.current_step = Step.FINISHED
@@ -210,153 +147,99 @@ class Worker(QObject):
             return
 
         self.current_step = Step.OPTIMIZE
-        self._log("\n--- Optimising GIF ---")
-        self._emit_weighted_progress(30, "Optimizing GIF…")
+        self._log("\n--- Optimizing GIF ---")
+        self._emit_weighted_progress(30, "Optimizing GIF...")
 
-        args = [
-            "-O3",
-            "--loopcount=0" if self.settings.loop else "--no-loopcount",
-            str(self.settings.output_file),
-            "-o", str(self.settings.output_file)
-        ]
-        self._run_qprocess(str(self.settings.gifsicle_path), args, LogPrefix.GIFSICLE_OPTIMIZE)
+        plan = build_gifsicle_plan(self.job, self.tools)
+        self._run_plan(plan)
 
-    def _finalize_conversion(self):
+    def _finalize_conversion(self) -> None:
         self.current_step = Step.FINISHED
         frame_info = str(self.ffmpeg_frame_count or "N/A")
         self._log(f'<br><font color="green">Generated {frame_info} frames</font>', html=True)
-        self._log(f'<br><font color="green">GIF saved as:</font> '
-                  f'{self.settings.output_file.resolve()}', html=True)
+        self._log(
+            f'<br><font color="green">{self._render_label} saved as:</font> '
+            f'{self.job.output_file.resolve()}',
+            html=True,
+        )
         self.progress_signal.emit(100, f"Done! {frame_info} frames.")
         self.finished_signal.emit(
-            True, "Success",
-            f"GIF saved.\nFrames: {frame_info}\n"
-            f"Output: {self.settings.output_file}", False)
+            True,
+            "Success",
+            f"{self._render_label} saved.\nFrames: {frame_info}\n"
+            f"Output: {self.job.output_file}",
+            False,
+        )
         self._cleanup_temp_files()
 
-    def _run_qprocess(self, program: str, arguments: list[str], log_prefix: str):
-        if self._is_cancelled:
-            self._handle_cancellation_during_step(); return
-
-        self.current_qprocess = QProcess(self)
-        self.current_qprocess.setProgram(program)
-        self.current_qprocess.setArguments([str(a) for a in arguments])
-        self.current_qprocess.setProperty("log_prefix", log_prefix)
-
-        self.current_qprocess.readyReadStandardOutput.connect(
-            self._on_process_ready_read_stdout)
-        self.current_qprocess.readyReadStandardError.connect(
-            self._on_process_ready_read_stderr)
-        self.current_qprocess.finished.connect(self._on_process_finished)
-        self.current_qprocess.errorOccurred.connect(self._on_process_error)
-
-        cmd_display = " ".join([program] + [str(a) for a in arguments])
+    def _run_plan(self, plan: CommandPlan) -> None:
+        cmd_display = " ".join([str(plan.program)] + [str(a) for a in plan.args])
         self._log(f"Cmd: {cmd_display}")
 
-        self.current_qprocess.start()
-        if not self.current_qprocess.waitForStarted(5000):
-            self._handle_error(f"{log_prefix}: failed to start: "
-                               f"{self.current_qprocess.errorString()}")
+        if not self.runner.start(str(plan.program), plan.args, plan.log_prefix):
+            prefix = plan.log_prefix.value if hasattr(plan.log_prefix, "value") else str(plan.log_prefix)
+            self._handle_error(f"{prefix}: failed to start: {self.runner.last_error_string}")
 
-    @Slot()
-    def _on_process_ready_read_stdout(self):
-        if not self.current_qprocess:
+    @Slot(str, str)
+    def _on_stdout_line(self, line: str, log_prefix: str) -> None:
+        if log_prefix != LogPrefix.FFMPEG_RENDER.value:
             return
-        data = self.current_qprocess.readAllStandardOutput() \
-                                    .data().decode(errors="replace")
-        log_prefix = self.current_qprocess.property("log_prefix")
 
-        self.stdout_buffer += data
-        parts = re.split(r'[\r\n]+', self.stdout_buffer)
-        # Preserve any trailing partial line for the next read
-        self.stdout_buffer = parts[-1] if self.stdout_buffer and self.stdout_buffer[-1] not in "\r\n" else ""
-        lines_to_process = parts[:-1] if self.stdout_buffer else parts
-        for line in lines_to_process:
-            if not line:
-                continue
-            self._process_stdout_line(line, log_prefix)
+        frame, out_time_ms = parse_ffmpeg_progress_line(line)
+        if frame is not None and frame > self.ffmpeg_frame_count:
+            self.ffmpeg_frame_count = frame
 
-    def _process_stdout_line(self, line: str, log_prefix: str):
+        if self.job.total_duration and out_time_ms is not None:
+            pct = min(100.0, out_time_ms / (self.job.total_duration * 1_000_000.0) * 100)
+            pct_rounded = round(pct)
+            self._emit_weighted_progress(pct, f"Rendering {self._render_label}: {pct_rounded} %")
+            return
 
-        if log_prefix == LogPrefix.FFMPEG_RENDER:
-            frame_match = re.search(r"frame=\s*(\d+)", line)
-            if frame_match:
-                frame = int(frame_match.group(1))
-                if frame > self.ffmpeg_frame_count:
-                    self.ffmpeg_frame_count = frame
-
-            if self.settings.total_duration:
-                time_match = re.search(r"out_time_ms=(\d+)", line)
-                if time_match:
-                    us = int(time_match.group(1))
-                    pct = min(100.0, us / (self.settings.total_duration * 1_000_000.0) * 100)
-                    pct_rounded = round(pct)
-                    self._emit_weighted_progress(pct, f"Rendering GIF: {pct_rounded} %")
+        if frame is not None:
+            if self.estimated_total_frames:
+                pct = (self.ffmpeg_frame_count / self.estimated_total_frames) * 100
+                pct = min(100.0, pct)
+                pct_rounded = round(pct)
+                self._emit_weighted_progress(pct, f"Rendering {self._render_label}: {pct_rounded} %")
             else:
+                self.progress_signal.emit(-1, f"Rendering {self._render_label}: {self.ffmpeg_frame_count} frames")
 
-                if frame_match:
-                    if self.estimated_total_frames:
-                        pct = (self.ffmpeg_frame_count / self.estimated_total_frames) * 100
-                        pct = min(100.0, pct)
-                        pct_rounded = round(pct)
-                        self._emit_weighted_progress(pct, f"Rendering GIF: {pct_rounded} %")
-                    else:
-                        self.progress_signal.emit(-1, f"Rendering GIF: {self.ffmpeg_frame_count} frames")
-
-        elif log_prefix == LogPrefix.GIFSICLE_OPTIMIZE:
-            if line.strip():
-                self._log(f"{log_prefix}: {line.strip()}")
-
-    @Slot()
-    def _on_process_ready_read_stderr(self):
-        if not self.current_qprocess:
-            return
-        data = self.current_qprocess.readAllStandardError() \
-                                    .data().decode(errors="replace")
-        log_prefix = self.current_qprocess.property("log_prefix")
-
-        for line in re.split(r'[\r\n]+', data):
-            if line:
-                self._process_stderr_line(line, log_prefix)
-
-    def _process_stderr_line(self, line: str, log_prefix: str):
-        """
-        spammy but harmless ffmpeg warnings we silence
-        """
-        ignore = [r"input frame is not in sRGB",
-                  r"Last message repeated \d+ times"]
+    @Slot(str, str)
+    def _on_stderr_line(self, line: str, log_prefix: str) -> None:
+        ignore = [
+            r"input frame is not in sRGB",
+            r"Last message repeated \d+ times",
+        ]
         if any(re.search(p, line, re.I) for p in ignore):
             return
         self._log(f"{log_prefix}-stderr: {line.strip()}")
 
-    @Slot(int, QProcess.ExitStatus)
-    def _on_process_finished(self, exit_code, exit_status):
+    @Slot(int, QProcess.ExitStatus, str)
+    def _on_process_finished(self, exit_code: int, exit_status: QProcess.ExitStatus, log_prefix: str) -> None:
         if self._kill_timer:
             self._kill_timer.stop()
             self._kill_timer.deleteLater()
             self._kill_timer = None
 
-        if not self.current_qprocess:
-            return
-        log_prefix = self.current_qprocess.property("log_prefix")
-
-        self.current_qprocess.deleteLater()
-        self.current_qprocess = None
-
         if self._is_cancelled:
-            self._handle_cancellation_during_step(); return
+            self._handle_cancellation_during_step()
+            return
 
         if exit_status == QProcess.ExitStatus.CrashExit or exit_code != 0:
             self._handle_error(f"{log_prefix}: exited with code {exit_code}")
             return
 
         if self.current_step == Step.PALETTE:
-            self._log(f"Palette generated → {self.pal_file}")
+            self._log(f"Palette generated -> {self.pal_file}")
             self._emit_weighted_progress(100, "Palette generated.")
             self.current_step = Step.RENDER
         elif self.current_step == Step.RENDER:
-            self._log("GIF rendering complete.")
-            self._emit_weighted_progress(100, "GIF rendered.")
+            self._log(f"{self._render_label} rendering complete.")
+            self._emit_weighted_progress(100, f"{self._render_label} rendered.")
+            if self._is_webp:
+                self.current_step = Step.FINISHED
+                self._start_next_step()
+                return
             if self.ffmpeg_frame_count <= 1:
                 self._log("Single-frame GIF detected; skipping gifsicle optimization.")
                 self.current_step = Step.FINISHED
@@ -364,37 +247,35 @@ class Worker(QObject):
                 return
             self.current_step = Step.OPTIMIZE
         elif self.current_step == Step.OPTIMIZE:
-            self._log("GIF optimisation complete.")
-            self._emit_weighted_progress(100, "GIF optimised.")
+            self._log("GIF optimization complete.")
+            self._emit_weighted_progress(100, "GIF optimized.")
             self.current_step = Step.FINISHED
 
         self._start_next_step()
 
-    @Slot(QProcess.ProcessError)
-    def _on_process_error(self, error):
-        if self._is_cancelled and \
-           error == QProcess.ProcessError.Crashed:
+    @Slot(QProcess.ProcessError, str)
+    def _on_process_error(self, error: QProcess.ProcessError, log_prefix: str) -> None:
+        if self._is_cancelled and error == QProcess.ProcessError.Crashed:
             self._log("Process terminated on user request.")
             self._handle_cancellation_during_step()
         else:
             self._handle_error(f"QProcess error: {error}")
 
-    def _handle_error(self, msg: str):
+    def _handle_error(self, msg: str) -> None:
         self._log(f"\nERROR: {msg}")
-        self.progress_signal.emit(0, f"Error: {msg[:50]}…")
+        self.progress_signal.emit(0, f"Error: {msg[:50]}...")
         self.finished_signal.emit(False, "Error", msg, True)
         self._cleanup_temp_files()
         self.current_step = Step.IDLE
 
-    def _handle_cancellation_during_step(self):
+    def _handle_cancellation_during_step(self) -> None:
         self._log("\nOperation cancelled.")
         self.progress_signal.emit(0, "Cancelled.")
-        self.finished_signal.emit(False, "Cancelled",
-                                  "Operation was cancelled by user.", False)
+        self.finished_signal.emit(False, "Cancelled", "Operation was cancelled by user.", False)
         self._cleanup_temp_files()
         self.current_step = Step.IDLE
 
-    def _cleanup_temp_files(self):
+    def _cleanup_temp_files(self) -> None:
         if self.temp_dir_obj:
             try:
                 self.temp_dir_obj.cleanup()
@@ -402,103 +283,43 @@ class Worker(QObject):
             except Exception as e:
                 self._log(f"Temp cleanup error: {e}")
         self.temp_dir_obj = None
-        self.pal_file     = None
+        self.pal_file = None
 
-    def _emit_weighted_progress(self, step_progress: float, message: str):
-        """
-        combines step-local progress with total step weights for a smoother global progress bar
-        """
+    def _emit_weighted_progress(self, step_progress: float, message: str) -> None:
+        if self._is_webp:
+            self.progress_signal.emit(int(round(step_progress)), message)
+            return
+
         weight_done = sum(STEP_WEIGHTS[s] for s in STEP_WEIGHTS if s.value < self.current_step.value)
         weight_this = STEP_WEIGHTS.get(self.current_step, 0)
         total_progress = weight_done + (weight_this * step_progress / 100.0)
         self.progress_signal.emit(int(round(total_progress)), message)
 
     @Slot()
-    def run_conversion(self):
-        self._is_cancelled       = False
-        self.ffmpeg_frame_count  = 0
+    def run_conversion(self) -> None:
+        self._is_cancelled = False
+        self.ffmpeg_frame_count = 0
+        self.estimated_total_frames = None
 
-        is_webp = str(self.settings.output_file).lower().endswith(".webp")
-        if is_webp:
-            self._log("Starting WebP generation …", clear_first=True)
-            self._run_webp_conversion()
-            return
-
-        self.current_step        = Step.PALETTE
-        self._log("Starting GIF generation …", clear_first=True)
-        self._start_next_step()
-        self.estimated_total_frames = 0
-
-        if self.settings.total_duration:
-            fps = self.settings.fps
+        if self.job.total_duration and self.job.total_duration > 0:
+            fps = self.job.fps
             if fps == -1:
-                fps = get_video_fps(self.settings.ffprobe_path, self.settings.input_file, log_callback=self._log)
+                fps = get_video_fps(self.tools.ffprobe, self.job.input_file, log_callback=self._log)
                 if fps:
                     self._log(f"Auto-detected source FPS: {fps:.2f}")
                 else:
                     self._log("Could not detect source FPS.")
             if fps:
-                try:
-                    self.estimated_total_frames = int(self.settings.total_duration * fps)
+                self.estimated_total_frames = estimate_total_frames(self.job.total_duration, fps)
+                if self.estimated_total_frames:
                     self._log(f"Estimated total frames: {self.estimated_total_frames}")
-                except Exception as e:
-                    self._log(f"Failed to estimate total frames: {e}")
 
-    def _run_webp_conversion(self):
-        fps = self.settings.fps
-        w = self.settings.width
-        h = self.settings.height
+        if self._is_webp:
+            self.current_step = Step.RENDER
+            self._log("Starting WebP generation ...", clear_first=True)
+            self._start_next_step()
+            return
 
-        filters = []
-        if fps != -1:
-            filters.append(f"fps={fps}")
-        if self.settings.speed_multiplier and self.settings.speed_multiplier != 1.0:
-            filters.append(f"setpts=PTS/{self.settings.speed_multiplier}")
-        self._add_scale_crop(filters, w, h)
-        filters.append("format=rgba")
-
-        vf_str = ",".join(filters)
-
-        args = [
-            "-v", "warning",
-            "-i", str(self.settings.input_file),
-            "-vf", vf_str,
-        ]
-
-        if self.settings.webp_lossless:
-            args += ["-lossless", "1"]
-        else:
-            args += [
-                "-q:v", str(self.settings.webp_quality),
-                "-compression_level", str(self.settings.webp_compression)
-            ]
-        
-        args += ["-loop", "0" if self.settings.loop else "1"]
-
-        args += ["-y", str(self.settings.output_file)]
-
-        if self.settings.total_duration and self.settings.total_duration > 0:
-            args = ["-progress", "pipe:1"] + args
-
-        self.progress_signal.emit(0, "Rendering WebP…")
-
-        def on_webp_finished(exit_code, exit_status):
-            self.current_step = Step.FINISHED
-            self._finalize_conversion()
-
-        self.current_qprocess = QProcess(self)
-        self.current_qprocess.setProgram(str(self.settings.ffmpeg_path))
-        self.current_qprocess.setArguments([str(a) for a in args])
-        self.current_qprocess.setProperty("log_prefix", LogPrefix.FFMPEG_RENDER)
-        self.current_qprocess.finished.connect(on_webp_finished)
-        self.current_qprocess.readyReadStandardOutput.connect(self._on_process_ready_read_stdout)
-        self.current_qprocess.readyReadStandardError.connect(self._on_process_ready_read_stderr)
-        self.current_qprocess.errorOccurred.connect(self._on_process_error)
-
-        cmd_display = " ".join([str(self.settings.ffmpeg_path)] + [str(a) for a in args])
-        self._log(f"Cmd: {cmd_display}")
-        self.current_qprocess.start()
-
-        if not self.current_qprocess.waitForStarted(5000):
-            self._handle_error(f"{LogPrefix.FFMPEG_RENDER}: failed to start: "
-                            f"{self.current_qprocess.errorString()}")
+        self.current_step = Step.PALETTE
+        self._log("Starting GIF generation ...", clear_first=True)
+        self._start_next_step()

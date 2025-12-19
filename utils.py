@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 from typing import Tuple, Union, Optional
 
-from PySide6.QtWidgets import QMessageBox
-
 # Hardcoded configuration values (config.ini deprecated)
 DEFAULT_FPS     = -1
 DEFAULT_WIDTH   = -1
@@ -74,6 +72,24 @@ def validate_output_path(output_path: Union[str, Path]) -> Tuple[bool, str]:
 
     return True, ""
 
+
+def validate_numeric_settings(fps_str: str, width_str: str, height_str: str) -> Tuple[int, int, int]:
+    try:
+        fps = int(fps_str)
+        width = int(width_str)
+        height = int(height_str)
+    except ValueError as e:
+        raise ValueError("FPS, width, and height must be integers.") from e
+
+    if fps < -1 or fps == 0:
+        raise ValueError("FPS must be -1 or a positive integer.")
+    if width == 0 or height == 0:
+        raise ValueError("Width and height must not be 0.")
+    if width < -1 or height < -1:
+        raise ValueError("Width and height must be >0 or -1.")
+
+    return fps, width, height
+
 def get_video_duration(ffprobe_path: Union[str, Path],
                        input_file:   Union[str, Path],
                        log_callback=None) -> Optional[float]:
@@ -131,6 +147,7 @@ def get_video_fps(ffprobe_path: Union[str, Path], input_file: Union[str, Path], 
         return None
 
 def show_error_message(title, message, parent=None):
+    from PySide6.QtWidgets import QMessageBox
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Icon.Critical)
     box.setWindowTitle(title)

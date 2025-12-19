@@ -15,9 +15,10 @@ from utils import (
     get_video_duration, show_error_message,
     validate_output_path, MAX_FPS, MAX_WIDTH, MAX_HEIGHT,
     DEFAULT_SPEED, MAX_SPEED, WEBP_QUALITY, WEBP_COMPRESSION,
-    PALETTE_MODE_OPTIONS, DEFAULT_PALETTE_MODE_KEY
+    PALETTE_MODE_OPTIONS, DEFAULT_PALETTE_MODE_KEY,
+    validate_numeric_settings
 )
-from models import ConverterSettings
+from models import ConversionJob, ToolPaths
 from worker import Worker
 
 IMAGE_VIDEO_EXTS = (
@@ -84,9 +85,11 @@ class GIFConverterApp(QWidget):
         gifsicle_path_str, gifsicle_source = dependency_paths["gifsicle"]
         ffprobe_path_str, ffprobe_source = dependency_paths["ffprobe"]
 
-        self.ffmpeg_path = Path(ffmpeg_path_str)
-        self.gifsicle_path = Path(gifsicle_path_str)
-        self.ffprobe_path = Path(ffprobe_path_str)
+        self.tools = ToolPaths(
+            ffmpeg=Path(ffmpeg_path_str),
+            gifsicle=Path(gifsicle_path_str),
+            ffprobe=Path(ffprobe_path_str)
+        )
 
         self.worker_thread = None
         self.worker = None
@@ -95,9 +98,9 @@ class GIFConverterApp(QWidget):
         self.setAcceptDrops(True)
         self._load_settings()
 
-        self._append_plain_log(f"Using ffmpeg: {self.ffmpeg_path} (from {ffmpeg_source})", False)
-        self._append_plain_log(f"Using gifsicle: {self.gifsicle_path} (from {gifsicle_source})", False)
-        self._append_plain_log(f"Using ffprobe: {self.ffprobe_path} (from {ffprobe_source})", False)
+        self._append_plain_log(f"Using ffmpeg: {self.tools.ffmpeg} (from {ffmpeg_source})", False)
+        self._append_plain_log(f"Using gifsicle: {self.tools.gifsicle} (from {gifsicle_source})", False)
+        self._append_plain_log(f"Using ffprobe: {self.tools.ffprobe} (from {ffprobe_source})", False)
         self._append_plain_log("Application started. Please select an input file.", False)
 
     def _init_ui(self):
@@ -396,7 +399,7 @@ class GIFConverterApp(QWidget):
     def start_conversion(self):
         input_path = Path(self.input_file_var.text())
         output_path = Path(self.output_file_var.text())
-        duration = get_video_duration(self.ffprobe_path, input_path, log_callback=self._append_plain_log)
+        duration = get_video_duration(self.tools.ffprobe, input_path, log_callback=self._append_plain_log)
         webp_lossless = self.webp_lossless_checkbox.isChecked()
 
         if duration is None:
@@ -412,15 +415,11 @@ class GIFConverterApp(QWidget):
             return
 
         try:
-            fps = int(self.fps_var.text())
-            w = int(self.width_var.text())
-            h = int(self.height_var.text())
-            if fps < -1 or fps == 0:
-                raise ValueError("FPS must be -1 or a positive integer.")
-            if w == 0 or h == 0:
-                raise ValueError("Width and height must not be 0.")
-            if w < -1 or h < -1:
-                raise ValueError("Width and height must be >0 or -1.")
+            fps, w, h = validate_numeric_settings(
+                self.fps_var.text(),
+                self.width_var.text(),
+                self.height_var.text()
+            )
         except ValueError as e:
             show_error_message("Error", str(e), self)
             return
@@ -438,14 +437,11 @@ class GIFConverterApp(QWidget):
 
         palette_mode = self.palette_mode_var.currentData()
 
-        settings = ConverterSettings(
+        job = ConversionJob(
             input_file=input_path,
             output_file=output_path,
             fps=fps, width=w, height=h,
             dither_setting=self.quality_var.currentData(),
-            ffmpeg_path=self.ffmpeg_path,
-            ffprobe_path=self.ffprobe_path,
-            gifsicle_path=self.gifsicle_path,
             total_duration=duration,
             speed_multiplier=speed_multiplier,
             webp_lossless=webp_lossless,
@@ -456,7 +452,7 @@ class GIFConverterApp(QWidget):
         )
 
         self.worker_thread = QThread()
-        self.worker = Worker(settings)
+        self.worker = Worker(job, self.tools)
         self.worker.moveToThread(self.worker_thread)
 
         self.worker.log_plain_signal.connect(self._append_plain_log)
